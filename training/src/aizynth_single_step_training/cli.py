@@ -190,7 +190,7 @@ def preprocess_splits(
 @click.option("--batch-size", default=256, show_default=True)
 @click.option("--hidden-nodes", default=512, show_default=True)
 @click.option("--dropout", default=0.4, show_default=True)
-@click.option("--fit-verbose", default=2, type=click.Choice(["0", "1", "2"]), show_default=True)
+@click.option("--fit-verbose", default=0, type=click.Choice(["0", "1", "2"]), show_default=True)
 def train(
     work_dir: Path,
     file_prefix: str,

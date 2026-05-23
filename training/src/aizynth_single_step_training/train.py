@@ -1,6 +1,16 @@
 from __future__ import annotations
 
 import numpy as np
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from scipy import sparse
 from sklearn.utils import shuffle
 
@@ -33,11 +43,17 @@ def train_expansion_model(config: TrainingConfig) -> None:
     import functools
     import os
 
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
     import tensorflow as tf
     from tensorflow.keras import regularizers
-    from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+    from tensorflow.keras.callbacks import (
+        Callback,
+        CSVLogger,
+        EarlyStopping,
+        ModelCheckpoint,
+        ReduceLROnPlateau,
+    )
     from tensorflow.keras.layers import Dense, Dropout, Input
     from tensorflow.keras.metrics import top_k_categorical_accuracy
     from tensorflow.keras.models import Sequential, load_model
@@ -55,6 +71,76 @@ def train_expansion_model(config: TrainingConfig) -> None:
         def __init__(self, config: TrainingConfig, dataset_label: str, **kwargs) -> None:
             Sequence.__init__(self, **kwargs)
             _BaseExpansionSequence.__init__(self, config, dataset_label)
+
+    class RichTrainingProgress(Callback):
+        def __init__(self, epochs: int, steps_per_epoch: int) -> None:
+            super().__init__()
+            self.epochs = epochs
+            self.steps_per_epoch = steps_per_epoch
+            self.progress: Progress | None = None
+            self.task_id = None
+            self.current_epoch = 0
+
+        def on_train_begin(self, logs=None) -> None:
+            self.progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[bold]training[/bold]"),
+                BarColumn(),
+                TaskProgressColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                TextColumn("{task.fields[status]}"),
+            )
+            self.progress.start()
+            self.task_id = self.progress.add_task(
+                "training",
+                total=self.epochs * self.steps_per_epoch,
+                status="starting",
+            )
+
+        def on_epoch_begin(self, epoch: int, logs=None) -> None:
+            self.current_epoch = epoch + 1
+            self._update(status=f"epoch {epoch + 1}/{self.epochs}")
+
+        def on_train_batch_end(self, batch: int, logs=None) -> None:
+            logs = logs or {}
+            self._advance(
+                status=(
+                    f"epoch {self._epoch_label()} "
+                    f"loss={logs.get('loss', float('nan')):.4f} "
+                    f"acc={logs.get('accuracy', float('nan')):.4f}"
+                )
+            )
+
+        def on_epoch_end(self, epoch: int, logs=None) -> None:
+            logs = logs or {}
+            self._update(
+                status=(
+                    f"epoch {epoch + 1}/{self.epochs} "
+                    f"loss={logs.get('loss', float('nan')):.4f} "
+                    f"val_loss={logs.get('val_loss', float('nan')):.4f} "
+                    f"val_acc={logs.get('val_accuracy', float('nan')):.4f} "
+                    f"val_top10={logs.get('val_top10_acc', float('nan')):.4f}"
+                )
+            )
+
+        def on_train_end(self, logs=None) -> None:
+            self._update(status="done")
+            if self.progress:
+                self.progress.stop()
+
+        def _advance(self, status: str) -> None:
+            if self.progress and self.task_id is not None:
+                self.progress.advance(self.task_id)
+                self.progress.update(self.task_id, status=status)
+
+        def _update(self, status: str) -> None:
+            if self.progress and self.task_id is not None:
+                self.progress.update(self.task_id, status=status)
+
+        def _epoch_label(self) -> str:
+            return f"{self.current_epoch}/{self.epochs}"
 
     train_seq = ExpansionSequence(config, "training")
     valid_seq = ExpansionSequence(config, "validation")
@@ -88,16 +174,20 @@ def train_expansion_model(config: TrainingConfig) -> None:
         metrics=["accuracy", "top_k_categorical_accuracy", top10_acc, top50_acc],
         jit_compile=False,
     )
+    callbacks = [
+        EarlyStopping(monitor="val_loss", patience=10),
+        CSVLogger(config.filename("_keras_training.log"), append=True),
+        ModelCheckpoint(best_model_path, monitor="loss", save_best_only=True),
+        ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=5, min_delta=0.000001),
+    ]
+    if config.fit_verbose == 0:
+        callbacks.insert(0, RichTrainingProgress(config.epochs, len(train_seq)))
+
     model.fit(
         train_seq,
         epochs=config.epochs,
         verbose=config.fit_verbose,
-        callbacks=[
-            EarlyStopping(monitor="val_loss", patience=10),
-            CSVLogger(config.filename("_keras_training.log"), append=True),
-            ModelCheckpoint(best_model_path, monitor="loss", save_best_only=True),
-            ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=5, min_delta=0.000001),
-        ],
+        callbacks=callbacks,
         validation_data=valid_seq,
         shuffle=True,
     )

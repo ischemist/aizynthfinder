@@ -18,7 +18,7 @@ class TrainingConfig:
     )
     hidden_nodes: int = 512
     drop_out: float = 0.4
-    fit_verbose: int = 2
+    fit_verbose: int = 0
 
     def filename(self, label: str) -> Path:
         postfix = {
