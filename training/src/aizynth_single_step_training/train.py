@@ -166,7 +166,7 @@ def train_expansion_model(config: TrainingConfig) -> None:
     config.output_path.mkdir(parents=True, exist_ok=True)
     checkpoint_path = config.output_path / "checkpoints"
     checkpoint_path.mkdir(exist_ok=True)
-    best_model_path = checkpoint_path / "keras_model.keras"
+    best_model_path = checkpoint_path / "keras_model_best_val_loss.keras"
     final_hdf5_path = checkpoint_path / "keras_model.hdf5"
     model.compile(
         optimizer=Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999),
@@ -177,7 +177,12 @@ def train_expansion_model(config: TrainingConfig) -> None:
     callbacks = [
         EarlyStopping(monitor="val_loss", patience=10),
         CSVLogger(config.filename("_keras_training.log"), append=True),
-        ModelCheckpoint(best_model_path, monitor="loss", save_best_only=True),
+        ModelCheckpoint(
+            best_model_path,
+            monitor="val_loss",
+            mode="min",
+            save_best_only=True,
+        ),
         ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=5, min_delta=0.000001),
     ]
     if config.fit_verbose == 0:

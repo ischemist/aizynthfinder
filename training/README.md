@@ -105,7 +105,11 @@ uv run aizynth-train-one-step write-config \
 the important outputs are:
 
 - `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/checkpoints/keras_model.hdf5`
+- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/checkpoints/keras_model_best_val_loss.keras`
+- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/checkpoints/keras_model_final.hdf5`
 - `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_unique_templates.csv.gz`
+
+`keras_model.hdf5` is exported from the best `val_loss` checkpoint and is the default path used by `write-config`.
 
 ## migrating old local names
 
