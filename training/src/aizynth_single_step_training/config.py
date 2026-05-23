@@ -18,6 +18,7 @@ class TrainingConfig:
     )
     hidden_nodes: int = 512
     drop_out: float = 0.4
+    fit_verbose: int = 2
 
     def filename(self, label: str) -> Path:
         postfix = {
@@ -36,4 +37,3 @@ class TrainingConfig:
             "_keras_training.log": "_keras_training.log",
         }.get(label, label)
         return self.output_path / f"{self.file_prefix}{postfix}"
-

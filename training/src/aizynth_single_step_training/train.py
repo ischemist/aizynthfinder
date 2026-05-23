@@ -31,7 +31,11 @@ class _BaseExpansionSequence:
 
 def train_expansion_model(config: TrainingConfig) -> None:
     import functools
+    import os
 
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
+    import tensorflow as tf
     from tensorflow.keras import regularizers
     from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
     from tensorflow.keras.layers import Dense, Dropout, Input
@@ -39,9 +43,18 @@ def train_expansion_model(config: TrainingConfig) -> None:
     from tensorflow.keras.models import Sequential, load_model
     from tensorflow.keras.optimizers import Adam
     from tensorflow.keras.utils import Sequence
+    try:
+        from absl import logging as absl_logging
+
+        absl_logging.set_verbosity(absl_logging.ERROR)
+    except ImportError:
+        pass
+    tf.get_logger().setLevel("ERROR")
 
     class ExpansionSequence(_BaseExpansionSequence, Sequence):
-        pass
+        def __init__(self, config: TrainingConfig, dataset_label: str, **kwargs) -> None:
+            Sequence.__init__(self, **kwargs)
+            _BaseExpansionSequence.__init__(self, config, dataset_label)
 
     train_seq = ExpansionSequence(config, "training")
     valid_seq = ExpansionSequence(config, "validation")
@@ -73,11 +86,12 @@ def train_expansion_model(config: TrainingConfig) -> None:
         optimizer=Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999),
         loss="categorical_crossentropy",
         metrics=["accuracy", "top_k_categorical_accuracy", top10_acc, top50_acc],
+        jit_compile=False,
     )
     model.fit(
         train_seq,
         epochs=config.epochs,
-        verbose=1,
+        verbose=config.fit_verbose,
         callbacks=[
             EarlyStopping(monitor="val_loss", patience=10),
             CSVLogger(config.filename("_keras_training.log"), append=True),

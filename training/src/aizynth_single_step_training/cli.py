@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,9 @@ import click
 
 from .config import TrainingConfig
 
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("AUTOGRAPH_VERBOSITY", "0")
 
 DEFAULT_RUN_NAME = "retrocast_v2026-05-12_ss_reaction-holdout-n1-n5"
 DEFAULT_WORK_DIR = Path("runs") / DEFAULT_RUN_NAME
@@ -186,7 +190,16 @@ def preprocess_splits(
 @click.option("--batch-size", default=256, show_default=True)
 @click.option("--hidden-nodes", default=512, show_default=True)
 @click.option("--dropout", default=0.4, show_default=True)
-def train(work_dir: Path, file_prefix: str, epochs: int, batch_size: int, hidden_nodes: int, dropout: float) -> None:
+@click.option("--fit-verbose", default=2, type=click.Choice(["0", "1", "2"]), show_default=True)
+def train(
+    work_dir: Path,
+    file_prefix: str,
+    epochs: int,
+    batch_size: int,
+    hidden_nodes: int,
+    dropout: float,
+    fit_verbose: str,
+) -> None:
     """train the original-style keras expansion network."""
     from .train import train_expansion_model
 
@@ -197,6 +210,7 @@ def train(work_dir: Path, file_prefix: str, epochs: int, batch_size: int, hidden
         batch_size=batch_size,
         hidden_nodes=hidden_nodes,
         drop_out=dropout,
+        fit_verbose=int(fit_verbose),
     )
     train_expansion_model(config)
 
