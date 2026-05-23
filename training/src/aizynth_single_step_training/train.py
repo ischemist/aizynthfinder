@@ -196,12 +196,6 @@ def train_expansion_model(config: TrainingConfig) -> None:
         validation_data=valid_seq,
         shuffle=True,
     )
-    best_model = load_model(
-        best_model_path,
-        custom_objects={
-            "top10_acc": top10_acc,
-            "top50_acc": top50_acc,
-        },
-    )
+    best_model = load_model(best_model_path, compile=False)
     best_model.save(final_hdf5_path)
     model.save(checkpoint_path / "keras_model_final.hdf5")
