@@ -29,7 +29,7 @@ cd training
 uv sync --extra cuda
 ```
 
-## end-to-end paroutes / retrocast run
+## end-to-end retrocast run
 
 download the single-step reaction-holdout training and validation splits:
 
@@ -52,14 +52,21 @@ uv run aizynth-train-one-step normalize-reactions \
   --output data/processed/training_reactions.csv
 ```
 
-extract rdchiral templates:
+extract rxnutils/rdchiral templates:
 
 ```bash
 uv run aizynth-train-one-step extract \
   data/processed/training_reactions.csv \
-  --output runs/paroutes/paroutes_raw_template_library.csv \
+  --output runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_training_raw_template_library.csv \
   --radius 1 \
-  --min-count 3 \
+  --min-count 1 \
+  --workers 8
+
+uv run aizynth-train-one-step extract \
+  data/processed/validation_reactions.csv \
+  --output runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_validation_raw_template_library.csv \
+  --radius 1 \
+  --min-count 1 \
   --workers 8
 ```
 
@@ -67,27 +74,23 @@ preprocess into sparse matrices and template tables:
 
 ```bash
 uv run aizynth-train-one-step preprocess \
-  runs/paroutes/paroutes_raw_template_library.csv \
-  --work-dir runs/paroutes \
-  --file-prefix paroutes
+  runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_training_raw_template_library.csv \
+  --template-occurrence 3
 ```
 
 if you extracted both retrocast training and validation splits separately, keep that fixed split instead:
 
 ```bash
 uv run aizynth-train-one-step preprocess-splits \
-  runs/paroutes/paroutes_training_raw_template_library.csv \
-  runs/paroutes/paroutes_validation_raw_template_library.csv \
-  --work-dir runs/paroutes \
-  --file-prefix paroutes
+  runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_training_raw_template_library.csv \
+  runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_validation_raw_template_library.csv \
+  --template-occurrence 3
 ```
 
 train:
 
 ```bash
 uv run aizynth-train-one-step train \
-  --work-dir runs/paroutes \
-  --file-prefix paroutes \
   --epochs 100 \
   --batch-size 256
 ```
@@ -96,15 +99,33 @@ write an aizynthfinder config snippet:
 
 ```bash
 uv run aizynth-train-one-step write-config \
-  --work-dir runs/paroutes \
-  --file-prefix paroutes \
-  --output runs/paroutes/aizynth_config.yml
+  --output runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/aizynth_config.yml
 ```
 
 the important outputs are:
 
-- `runs/paroutes/checkpoints/keras_model.hdf5`
-- `runs/paroutes/paroutes_unique_templates.csv.gz`
+- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/checkpoints/keras_model.hdf5`
+- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_unique_templates.csv.gz`
+
+## migrating old local names
+
+if you already ran the earlier `paroutes` examples, rename the run directory and prefix-bearing files:
+
+```bash
+old=paroutes
+new=retrocast_v2026-05-12_ss_reaction-holdout-n1-n5
+
+mkdir -p "runs/$new"
+find "runs/$old" -maxdepth 1 -type f -name "${old}_*" -print0 |
+  while IFS= read -r -d '' path; do
+    base=$(basename "$path")
+    mv "$path" "runs/$new/${base/#$old/$new}"
+  done
+
+if [ -d "runs/$old/checkpoints" ]; then
+  mv "runs/$old/checkpoints" "runs/$new/checkpoints"
+fi
+```
 
 ## notes
 

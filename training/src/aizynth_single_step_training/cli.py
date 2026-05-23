@@ -10,6 +10,10 @@ import click
 from .config import TrainingConfig
 
 
+DEFAULT_RUN_NAME = "retrocast_v2026-05-12_ss_reaction-holdout-n1-n5"
+DEFAULT_WORK_DIR = Path("runs") / DEFAULT_RUN_NAME
+
+
 @click.group()
 def main() -> None:
     """train an aizynthfinder-compatible single-step expansion policy."""
@@ -24,7 +28,7 @@ def main() -> None:
 def download_retrocast(
     output_dir: Path, artifact: str, split: tuple[str, ...], wire_format: str, dry_run: bool
 ) -> None:
-    """download hosted retrocast/paroutes training-set artifacts."""
+    """download hosted retrocast training-set artifacts."""
     output_dir.mkdir(parents=True, exist_ok=True)
     script = "https://files.ischemist.com/retrocast/get-training-set.sh"
     for split_name in split:
@@ -87,7 +91,7 @@ def normalize_reactions(input_path: Path, output_path: Path, limit: int | None) 
 @click.option("--radius", default=1, show_default=True)
 @click.option("--expand-ring", is_flag=True)
 @click.option("--expand-hetero", is_flag=True)
-@click.option("--min-count", default=3, show_default=True)
+@click.option("--min-count", default=1, show_default=True)
 @click.option("--limit", type=int, default=None)
 @click.option("--workers", default=1, show_default=True)
 def extract(
@@ -117,8 +121,8 @@ def extract(
 
 @main.command()
 @click.argument("template_library", type=click.Path(exists=True, path_type=Path))
-@click.option("--work-dir", type=click.Path(path_type=Path), default=Path("runs/paroutes"))
-@click.option("--file-prefix", default="paroutes")
+@click.option("--work-dir", type=click.Path(path_type=Path), default=DEFAULT_WORK_DIR, show_default=True)
+@click.option("--file-prefix", default=DEFAULT_RUN_NAME, show_default=True)
 @click.option("--template-occurrence", default=3, show_default=True)
 @click.option("--fingerprint-len", default=2048, show_default=True)
 @click.option("--fingerprint-radius", default=2, show_default=True)
@@ -146,8 +150,8 @@ def preprocess(
 @main.command("preprocess-splits")
 @click.argument("training_template_library", type=click.Path(exists=True, path_type=Path))
 @click.argument("validation_template_library", type=click.Path(exists=True, path_type=Path))
-@click.option("--work-dir", type=click.Path(path_type=Path), default=Path("runs/paroutes"))
-@click.option("--file-prefix", default="paroutes")
+@click.option("--work-dir", type=click.Path(path_type=Path), default=DEFAULT_WORK_DIR, show_default=True)
+@click.option("--file-prefix", default=DEFAULT_RUN_NAME, show_default=True)
 @click.option("--template-occurrence", default=3, show_default=True)
 @click.option("--fingerprint-len", default=2048, show_default=True)
 @click.option("--fingerprint-radius", default=2, show_default=True)
@@ -176,8 +180,8 @@ def preprocess_splits(
 
 
 @main.command()
-@click.option("--work-dir", type=click.Path(path_type=Path), default=Path("runs/paroutes"))
-@click.option("--file-prefix", default="paroutes")
+@click.option("--work-dir", type=click.Path(path_type=Path), default=DEFAULT_WORK_DIR, show_default=True)
+@click.option("--file-prefix", default=DEFAULT_RUN_NAME, show_default=True)
 @click.option("--epochs", default=100, show_default=True)
 @click.option("--batch-size", default=256, show_default=True)
 @click.option("--hidden-nodes", default=512, show_default=True)
@@ -198,8 +202,8 @@ def train(work_dir: Path, file_prefix: str, epochs: int, batch_size: int, hidden
 
 
 @main.command()
-@click.option("--work-dir", type=click.Path(path_type=Path), default=Path("runs/paroutes"))
-@click.option("--file-prefix", default="paroutes")
+@click.option("--work-dir", type=click.Path(path_type=Path), default=DEFAULT_WORK_DIR, show_default=True)
+@click.option("--file-prefix", default=DEFAULT_RUN_NAME, show_default=True)
 @click.option("--model", "model_path", type=click.Path(path_type=Path), default=None)
 @click.option("--output", "output_path", type=click.Path(path_type=Path), default=Path("aizynth_config.yml"))
 def write_config(work_dir: Path, file_prefix: str, model_path: Path | None, output_path: Path) -> None:
@@ -208,7 +212,7 @@ def write_config(work_dir: Path, file_prefix: str, model_path: Path | None, outp
     templates = work_dir / f"{file_prefix}_unique_templates.csv.gz"
     output_path.write_text(
         "expansion:\n"
-        "  paroutes:\n"
+        f"  {file_prefix}:\n"
         "    type: template-based\n"
         f"    model: {model}\n"
         f"    template: {templates}\n"
