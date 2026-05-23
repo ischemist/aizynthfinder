@@ -34,9 +34,9 @@ def train_expansion_model(config: TrainingConfig) -> None:
 
     from tensorflow.keras import regularizers
     from tensorflow.keras.callbacks import CSVLogger, EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-    from tensorflow.keras.layers import Dense, Dropout
+    from tensorflow.keras.layers import Dense, Dropout, Input
     from tensorflow.keras.metrics import top_k_categorical_accuracy
-    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.models import Sequential, load_model
     from tensorflow.keras.optimizers import Adam
     from tensorflow.keras.utils import Sequence
 
@@ -46,17 +46,18 @@ def train_expansion_model(config: TrainingConfig) -> None:
     train_seq = ExpansionSequence(config, "training")
     valid_seq = ExpansionSequence(config, "validation")
 
-    model = Sequential()
-    model.add(
-        Dense(
-            config.hidden_nodes,
-            input_shape=(train_seq.input_dim,),
-            activation="elu",
-            kernel_regularizer=regularizers.l2(0.001),
-        )
+    model = Sequential(
+        [
+            Input(shape=(train_seq.input_dim,)),
+            Dense(
+                config.hidden_nodes,
+                activation="elu",
+                kernel_regularizer=regularizers.l2(0.001),
+            ),
+            Dropout(config.drop_out),
+            Dense(train_seq.output_dim, activation="softmax"),
+        ]
     )
-    model.add(Dropout(config.drop_out))
-    model.add(Dense(train_seq.output_dim, activation="softmax"))
 
     top10_acc = functools.partial(top_k_categorical_accuracy, k=10)
     top10_acc.__name__ = "top10_acc"
@@ -66,6 +67,8 @@ def train_expansion_model(config: TrainingConfig) -> None:
     config.output_path.mkdir(parents=True, exist_ok=True)
     checkpoint_path = config.output_path / "checkpoints"
     checkpoint_path.mkdir(exist_ok=True)
+    best_model_path = checkpoint_path / "keras_model.keras"
+    final_hdf5_path = checkpoint_path / "keras_model.hdf5"
     model.compile(
         optimizer=Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999),
         loss="categorical_crossentropy",
@@ -78,10 +81,18 @@ def train_expansion_model(config: TrainingConfig) -> None:
         callbacks=[
             EarlyStopping(monitor="val_loss", patience=10),
             CSVLogger(config.filename("_keras_training.log"), append=True),
-            ModelCheckpoint(checkpoint_path / "keras_model.hdf5", monitor="loss", save_best_only=True),
+            ModelCheckpoint(best_model_path, monitor="loss", save_best_only=True),
             ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=5, min_delta=0.000001),
         ],
         validation_data=valid_seq,
         shuffle=True,
     )
+    best_model = load_model(
+        best_model_path,
+        custom_objects={
+            "top10_acc": top10_acc,
+            "top50_acc": top50_acc,
+        },
+    )
+    best_model.save(final_hdf5_path)
     model.save(checkpoint_path / "keras_model_final.hdf5")
