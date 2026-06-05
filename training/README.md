@@ -1,8 +1,8 @@
 # aizynth single-step training
 
-standalone `uv` project for training an aizynthfinder-compatible template expansion policy.
+standalone `uv` project for training aizynthfinder-compatible template expansion policies from retrocast single-step training sets.
 
-this intentionally clones the old aizynthfinder expansion model family:
+the model intentionally follows the old aizynthfinder expansion policy family:
 
 - product morgan fingerprint, default radius `2`, length `2048`
 - one hidden dense layer, `elu`, default `512` nodes
@@ -10,10 +10,6 @@ this intentionally clones the old aizynthfinder expansion model family:
 - dropout, default `0.4`
 - softmax over retained templates
 - categorical crossentropy with top-k metrics
-
-## what aizynthtrain is
-
-`aizynthtrain` was molecularai's separate pipeline repo for training synthesis prediction models consumed by aizynthfinder. it is not itself the model. its readme says it produced `uspto_keras_model.hdf5` and `uspto_unique_templates.csv.gz`, which are exactly the two expansion-policy artifacts aizynthfinder config expects. that repo is now archived and points users toward `aizynthmodels`.
 
 ## setup
 
@@ -29,108 +25,155 @@ cd training
 uv sync --extra cuda
 ```
 
-## end-to-end retrocast run
+`uv.toml` includes a project-local `retrocast` freshness exception so same-day retrocast releases work even if your global uv config has `exclude-newer = "7 days"`.
 
-download the single-step reaction-holdout training and validation splits:
+## datasets
+
+the current release is `v2026-06-05`, using retrocast `v0.7.0` schema v2 downloads.
+
+production runs train from `all.rsmi.txt.gz`, not the training/validation splits:
+
+```text
+retrocast_v2026-06-05_ss_reaction-holdout-n1-n5
+retrocast_v2026-06-05_ss_route-holdout-n1-n5
+```
+
+source artifacts:
+
+```text
+single-step-reaction-holdout-n1-n5
+single-step-route-holdout-n1-n5
+```
+
+## gpu production command
+
+to run the full production pipeline for both models:
+
+```bash
+cd training
+uv sync --extra cuda
+scripts/run-production-training.sh both
+```
+
+to run one model:
+
+```bash
+scripts/run-production-training.sh reaction
+scripts/run-production-training.sh route
+```
+
+override defaults with environment variables:
+
+```bash
+WORKERS=16 EPOCHS=100 BATCH_SIZE=256 TEMPLATE_OCCURRENCE=3 \
+  scripts/run-production-training.sh both
+```
+
+## download
 
 ```bash
 uv run aizynth-train-one-step download-retrocast \
+  --release v2026-06-05 \
   --artifact single-step-reaction-holdout-n1-n5 \
-  --split training \
-  --split validation \
-  --format jsonl \
+  --split all \
+  --format rsmi \
+  --output-dir data/raw
+
+uv run aizynth-train-one-step download-retrocast \
+  --release v2026-06-05 \
+  --artifact single-step-route-holdout-n1-n5 \
+  --split all \
+  --format rsmi \
   --output-dir data/raw
 ```
 
-add `--dry-run` first if you just want to see the resolved url/path without downloading.
-
-normalize whichever downloaded `*.jsonl.gz` or `*.rsmi.txt.gz` files you want to train from:
+## reaction-holdout production run
 
 ```bash
+release=v2026-06-05
+artifact=single-step-reaction-holdout-n1-n5
+run=retrocast_${release}_ss_reaction-holdout-n1-n5
+
 uv run aizynth-train-one-step normalize-reactions \
-  data/raw/path/to/training.jsonl.gz \
-  --output data/processed/training_reactions.csv
-```
+  data/raw/${release}/${artifact}/all.rsmi.txt.gz \
+  --output data/processed/${run}_all_reactions.csv
 
-extract rxnutils/rdchiral templates:
-
-```bash
 uv run aizynth-train-one-step extract \
-  data/processed/training_reactions.csv \
-  --output runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_training_raw_template_library.csv \
+  data/processed/${run}_all_reactions.csv \
+  --output runs/${run}/${run}_all_raw_template_library.csv \
   --radius 1 \
   --min-count 1 \
   --workers 8
 
-uv run aizynth-train-one-step extract \
-  data/processed/validation_reactions.csv \
-  --output runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_validation_raw_template_library.csv \
-  --radius 1 \
-  --min-count 1 \
-  --workers 8
-```
-
-preprocess into sparse matrices and template tables:
-
-```bash
-uv run aizynth-train-one-step preprocess \
-  runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_training_raw_template_library.csv \
+uv run aizynth-train-one-step preprocess-all \
+  runs/${run}/${run}_all_raw_template_library.csv \
+  --work-dir runs/${run} \
+  --file-prefix ${run} \
   --template-occurrence 3
-```
 
-if you extracted both retrocast training and validation splits separately, keep that fixed split instead:
-
-```bash
-uv run aizynth-train-one-step preprocess-splits \
-  runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_training_raw_template_library.csv \
-  runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_validation_raw_template_library.csv \
-  --template-occurrence 3
-```
-
-train:
-
-```bash
 uv run aizynth-train-one-step train \
+  --work-dir runs/${run} \
+  --file-prefix ${run} \
   --epochs 100 \
   --batch-size 256
-```
 
-write an aizynthfinder config snippet:
-
-```bash
 uv run aizynth-train-one-step write-config \
-  --output runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/aizynth_config.yml
+  --work-dir runs/${run} \
+  --file-prefix ${run} \
+  --output runs/${run}/aizynth_config.yml
 ```
 
-the important outputs are:
-
-- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/checkpoints/keras_model.hdf5`
-- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/checkpoints/keras_model_best_val_loss.keras`
-- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/checkpoints/keras_model_final.hdf5`
-- `runs/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5/retrocast_v2026-05-12_ss_reaction-holdout-n1-n5_unique_templates.csv.gz`
-
-`keras_model.hdf5` is exported from the best `val_loss` checkpoint and is the default path used by `write-config`.
-
-## migrating old local names
-
-if you already ran the earlier `paroutes` examples, rename the run directory and prefix-bearing files:
+## route-holdout production run
 
 ```bash
-old=paroutes
-new=retrocast_v2026-05-12_ss_reaction-holdout-n1-n5
+release=v2026-06-05
+artifact=single-step-route-holdout-n1-n5
+run=retrocast_${release}_ss_route-holdout-n1-n5
 
-mkdir -p "runs/$new"
-find "runs/$old" -maxdepth 1 -type f -name "${old}_*" -print0 |
-  while IFS= read -r -d '' path; do
-    base=$(basename "$path")
-    mv "$path" "runs/$new/${base/#$old/$new}"
-  done
+uv run aizynth-train-one-step normalize-reactions \
+  data/raw/${release}/${artifact}/all.rsmi.txt.gz \
+  --output data/processed/${run}_all_reactions.csv
 
-if [ -d "runs/$old/checkpoints" ]; then
-  mv "runs/$old/checkpoints" "runs/$new/checkpoints"
-fi
+uv run aizynth-train-one-step extract \
+  data/processed/${run}_all_reactions.csv \
+  --output runs/${run}/${run}_all_raw_template_library.csv \
+  --radius 1 \
+  --min-count 1 \
+  --workers 8
+
+uv run aizynth-train-one-step preprocess-all \
+  runs/${run}/${run}_all_raw_template_library.csv \
+  --work-dir runs/${run} \
+  --file-prefix ${run} \
+  --template-occurrence 3
+
+uv run aizynth-train-one-step train \
+  --work-dir runs/${run} \
+  --file-prefix ${run} \
+  --epochs 100 \
+  --batch-size 256
+
+uv run aizynth-train-one-step write-config \
+  --work-dir runs/${run} \
+  --file-prefix ${run} \
+  --output runs/${run}/aizynth_config.yml
 ```
+
+## outputs
+
+each production run writes:
+
+```text
+runs/<run>/checkpoints/keras_model.hdf5
+runs/<run>/checkpoints/keras_model_best_loss.keras
+runs/<run>/checkpoints/keras_model_final.hdf5
+runs/<run>/<run>_unique_templates.csv.gz
+runs/<run>/<run>_keras_training.log
+runs/<run>/aizynth_config.yml
+```
+
+`keras_model.hdf5` is exported from the best-loss checkpoint and is the default path used by `write-config`.
 
 ## notes
 
-the template extraction stage assumes mapped reactions. if the input split is not atom-mapped, rdchiral template extraction will fail for most rows. use the retrocast `reaction_records` jsonl where possible, since it preserves mapped smiles metadata.
+template extraction assumes atom-mapped reactions. prefer retrocast `rsmi` downloads for this workflow because they contain mapped reaction smiles directly.

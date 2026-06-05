@@ -84,6 +84,29 @@ def preprocess_expansion_splits(
     _save_unique_templates(train_data, config)
 
 
+def preprocess_expansion_all(template_library: Path, config: TrainingConfig) -> None:
+    config.output_path.mkdir(parents=True, exist_ok=True)
+    data = pd.read_csv(template_library).drop_duplicates(subset="reaction_hash")
+
+    counts = data.groupby("template_hash").size().sort_values(ascending=False)
+    kept = counts[counts >= config.template_occurrence].index
+    data = data[data["template_hash"].isin(kept)].copy()
+
+    encoder = LabelEncoder()
+    data["template_code"] = encoder.fit_transform(data["template_hash"])
+
+    data.to_csv(config.filename("all_library"), index=False)
+    data.to_csv(config.filename("training_library"), index=False)
+    data.iloc[0:0].to_csv(config.filename("validation_library"), index=False)
+    data.iloc[0:0].to_csv(config.filename("testing_library"), index=False)
+    data.to_csv(config.filename("library"), index=False)
+
+    _save_matrix_split(data, "training", config, len(encoder.classes_))
+    _save_matrix_split(data.iloc[0:0], "validation", config, len(encoder.classes_))
+    _save_matrix_split(data.iloc[0:0], "testing", config, len(encoder.classes_))
+    _save_unique_templates(data, config)
+
+
 def _split_and_save(data, label: str, config: TrainingConfig) -> None:
     train_size = config.split_size["training"]
     testing_frac = config.split_size["testing"]

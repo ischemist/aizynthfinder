@@ -14,7 +14,9 @@ from .config import TrainingConfig
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("AUTOGRAPH_VERBOSITY", "0")
 
-DEFAULT_RUN_NAME = "retrocast_v2026-05-12_ss_reaction-holdout-n1-n5"
+DEFAULT_RELEASE = "v2026-06-05"
+DEFAULT_ARTIFACT = "single-step-reaction-holdout-n1-n5"
+DEFAULT_RUN_NAME = f"retrocast_{DEFAULT_RELEASE}_ss_reaction-holdout-n1-n5"
 DEFAULT_WORK_DIR = Path("runs") / DEFAULT_RUN_NAME
 
 
@@ -25,25 +27,49 @@ def main() -> None:
 
 @main.command()
 @click.option("--output-dir", type=click.Path(path_type=Path), default=Path("data/raw"))
-@click.option("--artifact", default="single-step-reaction-holdout-n1-n5", show_default=True)
-@click.option("--split", multiple=True, default=("training", "validation"), show_default=True)
-@click.option("--format", "wire_format", default="jsonl", type=click.Choice(["jsonl", "rsmi"]), show_default=True)
+@click.option("--artifact", default=DEFAULT_ARTIFACT, show_default=True)
+@click.option("--release", default=DEFAULT_RELEASE, show_default=True)
+@click.option(
+    "--split",
+    multiple=True,
+    default=("training", "validation"),
+    type=click.Choice(["training", "validation", "all"]),
+    show_default=True,
+)
+@click.option("--format", "wire_format", default="rsmi", type=click.Choice(["jsonl", "rsmi"]), show_default=True)
 @click.option("--dry-run", is_flag=True)
 def download_retrocast(
-    output_dir: Path, artifact: str, split: tuple[str, ...], wire_format: str, dry_run: bool
+    output_dir: Path,
+    artifact: str,
+    release: str,
+    split: tuple[str, ...],
+    wire_format: str,
+    dry_run: bool,
 ) -> None:
-    """download hosted retrocast training-set artifacts."""
+    """download hosted retrocast training-set artifacts with the retrocast cli."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    script = "https://files.ischemist.com/retrocast/get-training-set.sh"
     for split_name in split:
-        click.echo(f"downloading {artifact} split={split_name} into {output_dir}")
-        dry = " --dry-run" if dry_run else ""
+        click.echo(
+            f"downloading {artifact} release={release} split={split_name} "
+            f"format={wire_format} into {output_dir}"
+        )
+        command = [
+            "retrocast",
+            "get-training-data",
+            artifact,
+            "--release",
+            release,
+            "--split",
+            split_name,
+            "--format",
+            wire_format,
+            "--dir",
+            str(output_dir),
+        ]
+        if dry_run:
+            command.append("--dry-run")
         subprocess.run(
-            [
-                "bash",
-                "-lc",
-                f"curl -fsSL {script} | bash -s -- {artifact} --split={split_name} --format={wire_format} --dir={output_dir}{dry}",
-            ],
+            command,
             check=True,
         )
 
@@ -66,14 +92,25 @@ def normalize_reactions(input_path: Path, output_path: Path, limit: int | None) 
             if line.startswith("{"):
                 record = json.loads(line)
                 mapped = (
-                    record.get("mapped_smiles")
-                    or record.get("reaction_smiles")
-                    or record.get("smiles")
+                    _first_string_value(
+                        record,
+                        (
+                            "mapped_smiles",
+                            "mapped_reaction_smiles",
+                            "reaction_smiles",
+                            "reaction_smarts",
+                            "smiles",
+                        ),
+                    )
                     or ""
                 )
                 reactants, products = _split_reaction_smiles(mapped)
-                reactants = reactants or _join_smiles(record.get("reactants"))
-                products = products or _join_smiles(record.get("product") or record.get("products"))
+                reactants = reactants or _join_smiles(
+                    _first_value(record, ("reactants", "precursors"))
+                )
+                products = products or _join_smiles(
+                    _first_value(record, ("product", "products", "target"))
+                )
             else:
                 reactants, products = _split_reaction_smiles(line)
             if not mapped:
@@ -183,6 +220,34 @@ def preprocess_splits(
     )
 
 
+@main.command("preprocess-all")
+@click.argument("template_library", type=click.Path(exists=True, path_type=Path))
+@click.option("--work-dir", type=click.Path(path_type=Path), default=DEFAULT_WORK_DIR, show_default=True)
+@click.option("--file-prefix", default=DEFAULT_RUN_NAME, show_default=True)
+@click.option("--template-occurrence", default=3, show_default=True)
+@click.option("--fingerprint-len", default=2048, show_default=True)
+@click.option("--fingerprint-radius", default=2, show_default=True)
+def preprocess_all(
+    template_library: Path,
+    work_dir: Path,
+    file_prefix: str,
+    template_occurrence: int,
+    fingerprint_len: int,
+    fingerprint_radius: int,
+) -> None:
+    """preprocess one production template library using every retained row for training."""
+    from .preprocess import preprocess_expansion_all
+
+    config = TrainingConfig(
+        output_path=work_dir,
+        file_prefix=file_prefix,
+        template_occurrence=template_occurrence,
+        fingerprint_len=fingerprint_len,
+        fingerprint_radius=fingerprint_radius,
+    )
+    preprocess_expansion_all(template_library, config)
+
+
 @main.command()
 @click.option("--work-dir", type=click.Path(path_type=Path), default=DEFAULT_WORK_DIR, show_default=True)
 @click.option("--file-prefix", default=DEFAULT_RUN_NAME, show_default=True)
@@ -253,9 +318,51 @@ def _join_smiles(value) -> str:
     if value is None:
         return ""
     if isinstance(value, list):
-        return ".".join(str(item) for item in value)
+        return ".".join(_stringify_smiles(item) for item in value)
+    if isinstance(value, dict):
+        return _first_string_value(
+            value,
+            ("mapped_smiles", "smiles", "reaction_smiles", "mapped_reaction_smiles"),
+        )
     return str(value)
 
 
 def _csv(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _first_value(obj, keys: tuple[str, ...]):
+    if isinstance(obj, dict):
+        for key in keys:
+            if key in obj and obj[key] not in (None, ""):
+                return obj[key]
+        for value in obj.values():
+            found = _first_value(value, keys)
+            if found not in (None, ""):
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = _first_value(value, keys)
+            if found not in (None, ""):
+                return found
+    return None
+
+
+def _first_string_value(obj, keys: tuple[str, ...]) -> str:
+    value = _first_value(obj, keys)
+    return _stringify_smiles(value)
+
+
+def _stringify_smiles(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return _first_string_value(
+            value,
+            ("mapped_smiles", "smiles", "reaction_smiles", "mapped_reaction_smiles"),
+        )
+    if isinstance(value, list):
+        return ".".join(_stringify_smiles(item) for item in value)
+    return str(value)

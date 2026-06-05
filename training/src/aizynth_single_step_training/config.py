@@ -23,6 +23,7 @@ class TrainingConfig:
     def filename(self, label: str) -> Path:
         postfix = {
             "library": "_template_library.csv",
+            "all_library": "_all.csv",
             "training_labels": "_training_labels.npz",
             "validation_labels": "_validation_labels.npz",
             "testing_labels": "_testing_labels.npz",

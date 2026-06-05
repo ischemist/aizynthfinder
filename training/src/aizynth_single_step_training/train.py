@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from rich.progress import (
     BarColumn,
@@ -143,7 +145,8 @@ def train_expansion_model(config: TrainingConfig) -> None:
             return f"{self.current_epoch}/{self.epochs}"
 
     train_seq = ExpansionSequence(config, "training")
-    valid_seq = ExpansionSequence(config, "validation")
+    valid_seq = _load_optional_sequence(ExpansionSequence, config, "validation")
+    has_validation = valid_seq is not None and valid_seq.label_matrix.shape[0] > 0
 
     model = Sequential(
         [
@@ -166,7 +169,8 @@ def train_expansion_model(config: TrainingConfig) -> None:
     config.output_path.mkdir(parents=True, exist_ok=True)
     checkpoint_path = config.output_path / "checkpoints"
     checkpoint_path.mkdir(exist_ok=True)
-    best_model_path = checkpoint_path / "keras_model_best_val_loss.keras"
+    monitor_metric = "val_loss" if has_validation else "loss"
+    best_model_path = checkpoint_path / f"keras_model_best_{monitor_metric}.keras"
     final_hdf5_path = checkpoint_path / "keras_model.hdf5"
     model.compile(
         optimizer=Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999),
@@ -175,27 +179,41 @@ def train_expansion_model(config: TrainingConfig) -> None:
         jit_compile=False,
     )
     callbacks = [
-        EarlyStopping(monitor="val_loss", patience=10),
         CSVLogger(config.filename("_keras_training.log"), append=True),
         ModelCheckpoint(
             best_model_path,
-            monitor="val_loss",
+            monitor=monitor_metric,
             mode="min",
             save_best_only=True,
         ),
-        ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=5, min_delta=0.000001),
+        ReduceLROnPlateau(monitor=monitor_metric, factor=0.5, patience=5, min_delta=0.000001),
     ]
+    if has_validation:
+        callbacks.insert(0, EarlyStopping(monitor="val_loss", patience=10))
     if config.fit_verbose == 0:
         callbacks.insert(0, RichTrainingProgress(config.epochs, len(train_seq)))
 
+    fit_kwargs = {
+        "epochs": config.epochs,
+        "verbose": config.fit_verbose,
+        "callbacks": callbacks,
+        "shuffle": True,
+    }
+    if has_validation:
+        fit_kwargs["validation_data"] = valid_seq
+
     model.fit(
         train_seq,
-        epochs=config.epochs,
-        verbose=config.fit_verbose,
-        callbacks=callbacks,
-        validation_data=valid_seq,
-        shuffle=True,
+        **fit_kwargs,
     )
     best_model = load_model(best_model_path, compile=False)
     best_model.save(final_hdf5_path)
     model.save(checkpoint_path / "keras_model_final.hdf5")
+
+
+def _load_optional_sequence(sequence_cls, config: TrainingConfig, dataset_label: str):
+    inputs = config.filename(dataset_label + "_inputs")
+    labels = config.filename(dataset_label + "_labels")
+    if not Path(inputs).exists() or not Path(labels).exists():
+        return None
+    return sequence_cls(config, dataset_label)
