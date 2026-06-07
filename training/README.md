@@ -36,6 +36,7 @@ production runs train from `all.rsmi.txt.gz`, not the training/validation splits
 ```text
 retrocast_v2026-06-05_ss_reaction-holdout-n1-n5
 retrocast_v2026-06-05_ss_route-holdout-n1-n5
+retrocast_v2026-06-05_ss_reaction-holdout-plus-n5
 ```
 
 source artifacts:
@@ -43,6 +44,7 @@ source artifacts:
 ```text
 single-step-reaction-holdout-n1-n5
 single-step-route-holdout-n1-n5
+n5-single-step-reactions
 ```
 
 ## gpu production command
@@ -60,6 +62,7 @@ to run one model:
 ```bash
 scripts/run-production-training.sh reaction
 scripts/run-production-training.sh route
+scripts/run-production-training.sh reaction+n5
 ```
 
 override defaults with environment variables:
@@ -96,17 +99,17 @@ run=retrocast_${release}_ss_reaction-holdout-n1-n5
 
 uv run aizynth-train-one-step normalize-reactions \
   data/raw/${release}/${artifact}/all.rsmi.txt.gz \
-  --output data/processed/${run}_all_reactions.csv
+  --output data/processed/${run}_all_reactions.csv.gz
 
 uv run aizynth-train-one-step extract \
-  data/processed/${run}_all_reactions.csv \
-  --output runs/${run}/${run}_all_raw_template_library.csv \
+  data/processed/${run}_all_reactions.csv.gz \
+  --output runs/${run}/${run}_all_raw_template_library.csv.gz \
   --radius 1 \
   --min-count 1 \
   --workers 8
 
 uv run aizynth-train-one-step preprocess-all \
-  runs/${run}/${run}_all_raw_template_library.csv \
+  runs/${run}/${run}_all_raw_template_library.csv.gz \
   --work-dir runs/${run} \
   --file-prefix ${run} \
   --template-occurrence 3
@@ -132,17 +135,17 @@ run=retrocast_${release}_ss_route-holdout-n1-n5
 
 uv run aizynth-train-one-step normalize-reactions \
   data/raw/${release}/${artifact}/all.rsmi.txt.gz \
-  --output data/processed/${run}_all_reactions.csv
+  --output data/processed/${run}_all_reactions.csv.gz
 
 uv run aizynth-train-one-step extract \
-  data/processed/${run}_all_reactions.csv \
-  --output runs/${run}/${run}_all_raw_template_library.csv \
+  data/processed/${run}_all_reactions.csv.gz \
+  --output runs/${run}/${run}_all_raw_template_library.csv.gz \
   --radius 1 \
   --min-count 1 \
   --workers 8
 
 uv run aizynth-train-one-step preprocess-all \
-  runs/${run}/${run}_all_raw_template_library.csv \
+  runs/${run}/${run}_all_raw_template_library.csv.gz \
   --work-dir runs/${run} \
   --file-prefix ${run} \
   --template-occurrence 3
@@ -159,6 +162,55 @@ uv run aizynth-train-one-step write-config \
   --output runs/${run}/aizynth_config.yml
 ```
 
+## reaction-holdout plus n5 control run
+
+this control combines the reaction-holdout production reactions with all n5 single-step reactions, dedupes exact reaction-smiles lines, then trains one production model from the combined set:
+
+```bash
+cd training
+WORKERS=16 EPOCHS=100 BATCH_SIZE=256 TEMPLATE_OCCURRENCE=3 \
+  scripts/run-production-training.sh reaction+n5
+```
+
+manual equivalent:
+
+```bash
+release=v2026-06-05
+reaction_artifact=single-step-reaction-holdout-n1-n5
+n5_artifact=n5-single-step-reactions
+run=retrocast_${release}_ss_reaction-holdout-plus-n5
+
+uv run aizynth-train-one-step download-retrocast \
+  --release ${release} \
+  --artifact ${reaction_artifact} \
+  --split all \
+  --format rsmi \
+  --output-dir data/raw
+
+uv run aizynth-train-one-step download-retrocast \
+  --release ${release} \
+  --artifact ${n5_artifact} \
+  --split all \
+  --format rsmi \
+  --output-dir data/raw
+
+uv run aizynth-train-one-step combine-rsmi \
+  data/raw/${release}/${reaction_artifact}/all.rsmi.txt.gz \
+  data/raw/${release}/${n5_artifact}/all.rsmi.txt.gz \
+  --output data/raw/${release}/${run}/all.rsmi.txt.gz
+
+uv run aizynth-train-one-step normalize-reactions \
+  data/raw/${release}/${run}/all.rsmi.txt.gz \
+  --output data/processed/${run}_all_reactions.csv.gz
+
+uv run aizynth-train-one-step extract \
+  data/processed/${run}_all_reactions.csv.gz \
+  --output runs/${run}/${run}_all_raw_template_library.csv.gz \
+  --radius 1 \
+  --min-count 1 \
+  --workers 16
+```
+
 ## outputs
 
 each production run writes:
@@ -167,6 +219,8 @@ each production run writes:
 runs/<run>/checkpoints/keras_model.hdf5
 runs/<run>/checkpoints/keras_model_best_loss.keras
 runs/<run>/checkpoints/keras_model_final.hdf5
+runs/<run>/<run>_all.csv.gz
+runs/<run>/<run>_all_raw_template_library.csv.gz
 runs/<run>/<run>_unique_templates.csv.gz
 runs/<run>/<run>_keras_training.log
 runs/<run>/aizynth_config.yml

@@ -82,7 +82,7 @@ def normalize_reactions(input_path: Path, output_path: Path, limit: int | None) 
     """convert retrocast jsonl/rsmi reaction files into product/reactants csv."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with _open_text(input_path) as infile, output_path.open("w") as outfile:
+    with _open_text(input_path) as infile, _open_write_text(output_path) as outfile:
         outfile.write("reaction_smiles,reactants,products,mapped_smiles\n")
         for line in infile:
             line = line.strip()
@@ -124,6 +124,50 @@ def normalize_reactions(input_path: Path, output_path: Path, limit: int | None) 
             if limit and count >= limit:
                 break
     click.echo(f"wrote {count} reactions to {output_path}")
+
+
+@main.command("combine-rsmi")
+@click.argument("input_paths", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--output", "output_path", type=click.Path(path_type=Path), required=True)
+@click.option("--keep-duplicates", is_flag=True)
+@click.option("--limit", type=int, default=None)
+def combine_rsmi(
+    input_paths: tuple[Path, ...],
+    output_path: Path,
+    keep_duplicates: bool,
+    limit: int | None,
+) -> None:
+    """combine retrocast rsmi/jsonl reaction files into one rsmi text file."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    total = 0
+    written = 0
+    with _open_write_text(output_path) as outfile:
+        for input_path in input_paths:
+            with _open_text(input_path) as infile:
+                for line in infile:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    total += 1
+                    reaction_smiles = _reaction_smiles_from_line(line)
+                    if not reaction_smiles:
+                        continue
+                    if not keep_duplicates and reaction_smiles in seen:
+                        continue
+                    seen.add(reaction_smiles)
+                    outfile.write(reaction_smiles + "\n")
+                    written += 1
+                    if limit and written >= limit:
+                        click.echo(
+                            f"wrote {written} reactions to {output_path}; "
+                            f"read={total}; duplicates_skipped={total - written}"
+                        )
+                        return
+    click.echo(
+        f"wrote {written} reactions to {output_path}; "
+        f"read={total}; duplicates_skipped={total - written}"
+    )
 
 
 @main.command()
@@ -305,6 +349,29 @@ def write_config(work_dir: Path, file_prefix: str, model_path: Path | None, outp
 
 def _open_text(path: Path):
     return gzip.open(path, "rt", encoding="utf8") if path.suffix == ".gz" else path.open(encoding="utf8")
+
+
+def _open_write_text(path: Path):
+    return gzip.open(path, "wt", encoding="utf8") if path.suffix == ".gz" else path.open("w", encoding="utf8")
+
+
+def _reaction_smiles_from_line(line: str) -> str:
+    if line.startswith("{"):
+        record = json.loads(line)
+        return (
+            _first_string_value(
+                record,
+                (
+                    "mapped_smiles",
+                    "mapped_reaction_smiles",
+                    "reaction_smiles",
+                    "reaction_smarts",
+                    "smiles",
+                ),
+            )
+            or ""
+        )
+    return line
 
 
 def _split_reaction_smiles(smiles: str) -> tuple[str, str]:

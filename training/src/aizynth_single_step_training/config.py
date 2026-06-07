@@ -22,17 +22,17 @@ class TrainingConfig:
 
     def filename(self, label: str) -> Path:
         postfix = {
-            "library": "_template_library.csv",
-            "all_library": "_all.csv",
+            "library": "_template_library.csv.gz",
+            "all_library": "_all.csv.gz",
             "training_labels": "_training_labels.npz",
             "validation_labels": "_validation_labels.npz",
             "testing_labels": "_testing_labels.npz",
             "training_inputs": "_training_inputs.npz",
             "validation_inputs": "_validation_inputs.npz",
             "testing_inputs": "_testing_inputs.npz",
-            "training_library": "_training.csv",
-            "validation_library": "_validation.csv",
-            "testing_library": "_testing.csv",
+            "training_library": "_training.csv.gz",
+            "validation_library": "_validation.csv.gz",
+            "testing_library": "_testing.csv.gz",
             "unique_templates_hdf5": "_unique_templates.hdf5",
             "unique_templates_csv": "_unique_templates.csv.gz",
             "_keras_training.log": "_keras_training.log",
